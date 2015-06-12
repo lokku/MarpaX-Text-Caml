@@ -13,10 +13,10 @@ use Data::Dumper::OneLine;
 
 our $VERSION = '0.1';
 
-sub dumper {
+sub dumpit {
     require Data::Dumper;
 
-    return Data::Dumper::Dumper @_;
+    say Data::Dumper::Dumper @_;
 }
 
 sub new {
@@ -40,7 +40,7 @@ sub _compile {
     my $template = shift;
     my $parsed = $self->_parse($template);
 
-    say dumper $parsed;
+    # dumpit $parsed;
 
     my $code = eval $parsed // die $@;
 
@@ -65,7 +65,7 @@ sub _expand_variables {
         }
         elsif ( ref $value eq 'ARRAY' ) {
             if ( any { ref $_ ne 'HASH' } @$value ) {
-                $input->{$key} = [ map { { _self => $_ } } @$value ];
+                $input->{$key} = $self->_expand_array_hashes($value);
             }
             else {
                 $input->{$key} = [ map { $self->_expand_variables($_) } @$value ];
@@ -76,6 +76,20 @@ sub _expand_variables {
     }
 
     return $input;
+}
+
+sub _expand_array_hashes {
+    my $self = shift;
+    my $value = shift;
+
+    return [ map {
+        if ( ref $_ eq 'ARRAY' ) {
+            { _self => $self->_expand_array_hashes($_) };
+        }
+        else {
+            { _self => $_ };
+        }
+    } @$value ];
 }
 
 sub _add_indexes {
@@ -151,20 +165,6 @@ sub _section {
     my $inverse = shift;
     my @children = @_;
 
-    # unless this is the base node use _process_sections
-    return _process_sections($input, $ra_context, $inverse, @children) if scalar(@$ra_context);
-
-    my @elements = _process_sections($input, $ra_context, $inverse, @children);
-
-    return join '', @elements;
-}
-
-sub _process_sections {
-    my $input = shift;
-    my $ra_context = shift;
-    my $inverse = shift;
-    my @children = @_;
-
     my $value = _find_key($input, @$ra_context);
 
     # Process contexts that include arrays, but only if they have not
@@ -187,28 +187,37 @@ sub _process_sections {
                     return sub {
                         my $index = shift;
 
-                        _process_sections($input, [@rest, $index, @scope], $inverse, @children)
+                        _section($input, [@rest, $index, @scope], $inverse, @children)
                     };
                 }
                 else {
                     # Otherwise this is the list itself, so process a section
                     # for each element in the list, first expanding any child
-                    # subs for each item.
+                    # subs for each item
 
                     return map {
                         my $index = $_->{_idx};
 
                         my @inner = map { ref $_ eq 'CODE' ? $_->($index) : $_ } @children;
 
-                        _process_sections($input, [ @rest, $index ], $inverse, @inner);
+                        _section($input, [ @rest, $index ], $inverse, @inner);
                     } @$value;
                 }
 
             }
         }
     }
+    else {
+        # Handle arrays of arrays which use {{#.}}{{/.}}
+        if ( ref $value eq 'ARRAY' ) {
+            my $i = 0;
 
-    # say dumper [ $ra_context, !!$value, $inverse ];
+            return map {
+                _section($input, [ @$ra_context, $i++ ], $inverse, @children)
+            } @$value;
+        }
+    }
+
     return () unless ($value xor $inverse);
     @children = _interpolate_variables($input, $ra_context, @children);
     @children = _remove_whitespace($input, $ra_context, @children);
@@ -261,7 +270,7 @@ sub _parse {
 
     my $output = $self->_parse_tree($ra_tree);
 
-    return "sub { my (\$c, \$s) = \@_; return $output; }";
+    return "sub { my (\$c, \$s) = \@_; return join('', $output); }";
 }
 
 sub _parse_tree {
@@ -433,7 +442,7 @@ package MarpaX::Text::Caml::Actions {
     sub do_inverse_section {
         my (undef, undef, $context, undef, $ra_tree) = @_;
 
-        my $context = do_section(undef, undef, $context, undef, $ra_tree);
+        $context = do_section(undef, undef, $context, undef, $ra_tree);
         $context->{inverse} = 1;
 
         return $context;
@@ -441,6 +450,9 @@ package MarpaX::Text::Caml::Actions {
 
     sub do_section {
         my (undef, undef, $context, undef, $ra_tree) = @_;
+
+        $context = '_self' if $context eq '.';
+
         my ($first, @rest) = split /\./, $context;
 
         if ( @rest ) {
