@@ -7,7 +7,7 @@ use feature 'say';
 
 require Scalar::Util;
 use Clone qw(clone);
-use List::Util qw(any);
+use List::Util qw(any none);
 use Marpa::R2;
 use Data::Dumper::OneLine;
 
@@ -152,17 +152,59 @@ sub _section {
     my $ra_context = shift;
     my @children = @_;
 
-    my $value = _find_key($input, @$ra_context);
-    return '' unless $value;
+    # unless this is the base node use _process_sections
+    return _process_sections($input, $ra_context, @children) if scalar(@$ra_context);
 
-    if ( ref $value eq 'ARRAY' ) {
-        return map { _section($input, [ @$ra_context, $_->{_idx} ], @children) } @$value;
+    my @elements = _process_sections($input, $ra_context, @children);
+
+    return join '', @elements;
+}
+
+sub _process_sections {
+    my $input = shift;
+    my $ra_context = shift;
+    my @children = @_;
+
+    my $value = _find_key($input, @$ra_context);
+
+    if ( none { Scalar::Util::looks_like_number($_) } @$ra_context ) {
+        my @scope = @$ra_context;
+        my @rest;
+        while ( @scope ) {
+            my $current = shift @scope;
+            my $next = $scope[0];
+
+            push @rest, $current;
+            my $value = _find_key($input, @rest);
+
+
+            if ( ref $value eq 'ARRAY' ) {
+                if ( @scope ) {
+                    return sub {
+                        my $index = shift;
+
+                        _process_sections($input, [@rest, $index, @scope], @children)
+                    };
+                }
+                else {
+                    return map {
+                        my $index = $_->{_idx};
+
+                        my @inner = map { ref $_ eq 'CODE' ? $_->($index) : $_ } @children;
+
+                        _process_sections($input, [ @rest, $index ], @inner);
+                    } @$value;
+                }
+
+            }
+        }
     }
 
+    return () unless $value;
     @children = _interpolate_variables($input, $ra_context, @children);
     @children = _remove_whitespace($input, $ra_context, @children);
 
-    return join '', @children;
+    return @children;
 };
 
 sub _remove_whitespace {
