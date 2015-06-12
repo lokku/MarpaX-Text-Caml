@@ -8,6 +8,8 @@ use feature 'say';
 require Scalar::Util;
 use Clone qw(clone);
 use List::Util qw(any none);
+use File::Slurp qw(read_file);
+use Text::Trim qw(trim);
 use Marpa::R2;
 use Data::Dumper::OneLine;
 
@@ -21,8 +23,9 @@ sub dumpit {
 
 sub new {
     my $class = shift;
+    my %opts = @_;
 
-    return bless {}, $class;
+    return bless \%opts, $class;
 }
 
 sub render {
@@ -32,7 +35,45 @@ sub render {
 
     return '' unless $template;
 
+    $template = $self->_inline_partials($template);
+
     return $self->_compile($template)->($data);
+}
+
+sub _inline_partials {
+    my $self = shift;
+    my $template = shift;
+
+    foreach my $filename ( $template =~ m/{{>(.*)}}/ ) {
+        my $partial = read_file($self->_path_for(trim($filename)));
+
+        $partial = $self->_inline_partials($partial);
+        $partial = trim($partial);
+
+        $template =~ s/{{>$filename}}/$partial/;
+    };
+
+
+    return $template;
+}
+
+sub _path_for {
+    my $self = shift;
+    my $filename = shift;
+
+    return join '/', grep { $_ } $self->{templates_path}, $filename;
+}
+
+sub render_file {
+    my $self = shift;
+    my $filename = shift;
+    my $data = shift;
+
+    my $path = $self->_path_for($filename);
+
+    my $template = read_file($path);
+
+    return $self->render($template, $data);
 }
 
 sub _compile {
@@ -142,7 +183,12 @@ sub _find_key {
             }
         }
         elsif ( ref $value eq 'HASH' ) {
-            $value = $value->{$key};
+            if ( Scalar::Util::blessed($value->{_self}) ) {
+                $value = $value->{_self}->$key;
+            }
+            else {
+                $value = $value->{$key};
+            }
         }
         elsif ( scalar @keys > 1 ) {
             return _find_key_in_parent_scope($input, @keys);
@@ -179,7 +225,7 @@ sub _section {
             my $value = _find_key($input, @rest);
 
 
-            if ( ref $value eq 'ARRAY' ) {
+            if ( ref $value eq 'ARRAY' && scalar @$value > 0 ) {
                 if ( @scope ) {
                     # If this is a section within a list then make a sub that
                     # processes that section for a given index
@@ -218,20 +264,17 @@ sub _section {
         }
     }
 
+    $value = 0 if ref $value eq 'ARRAY' && scalar @$value == 0;
+
+    # If inverted section and false => show
+    # If normal section and true => show
+    # Otherwise do not show
     return () unless ($value xor $inverse);
     @children = _interpolate_variables($input, $ra_context, @children);
-    @children = _remove_whitespace($input, $ra_context, @children);
+    @children = grep { defined } @children;
 
     return @children;
 };
-
-sub _remove_whitespace {
-    my $input = shift;
-    my $ra_context = shift;
-    my @children = @_;
-
-    return grep { defined && m/\S/ } @children;
-}
 
 sub _interpolate_variables {
     my $input = shift;
@@ -270,7 +313,20 @@ sub _parse {
 
     my $output = $self->_parse_tree($ra_tree);
 
-    return "sub { my (\$c, \$s) = \@_; return join('', $output); }";
+    return "sub {
+        my (\$c, \$s) = \@_;
+
+        my \@elements = $output;
+
+        \@elements = map {
+            s/^\\n//;
+            s/\\n\$//;
+
+            \$_;
+        } \@elements;
+
+        return join '', \@elements;
+    }";
 }
 
 sub _parse_tree {
@@ -371,6 +427,7 @@ sub _grammar {
     interpolate ::= '{{' word '}}'                              action => do_interpolate_escaped
                   | '{{{' word '}}}'                            action => do_interpolate
                   | '{{&' word '}}'                             action => do_interpolate
+                  | '{{-' word '}}'                             action => do_literal
                   | '{{#' word '}}' mustache '{{/' word '}}'    action => do_section
                   | '{{^' word '}}' mustache '{{/' word '}}'    action => do_inverse_section
 
@@ -388,6 +445,15 @@ sub _grammar {
     string ::= lstring+ action => do_string
 
     lstring ~ [^{}]+
+
+    :discard ~ comment
+    comment ~ maybe_newline '{{!' anything '}}' maybe_newline
+
+    maybe_newline ~ newline*
+
+    newline ~ [\n]+
+
+    anything ~ [\d\D]+
 
     GRAMMAR
 }
@@ -465,6 +531,12 @@ package MarpaX::Text::Caml::Actions {
             tree    => $ra_tree,
             inverse => 0,
         };
+    }
+
+    sub do_literal {
+        my (undef, undef, $variable, undef) = @_;
+
+        return "'{{$variable}}'";
     }
 }
 

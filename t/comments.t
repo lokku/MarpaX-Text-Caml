@@ -21,7 +21,7 @@ is $output => "foo\nbar", 'trailing new-line {{! Comment}}';
 
 $output =
   $renderer->render("foo\n   {{! Comment}}\nbar", {"! Comment" => 'ooops'});
-is $output => "foo\nbar", 'a comment is not a variable name (with new-line)';
+is $output => "foo\n   bar", 'a comment is not a variable name (with new-line)';
 
 $output =
   $renderer->render("foo {{! Comment}} bar", {"! Comment" => 'ooops'});
