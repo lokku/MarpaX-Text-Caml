@@ -40,7 +40,7 @@ sub _compile {
     my $template = shift;
     my $parsed = $self->_parse($template);
 
-    # say dumper $parsed;
+    say dumper $parsed;
 
     my $code = eval $parsed // die $@;
 
@@ -116,8 +116,6 @@ sub _find_key {
 
     # Walk down the context to find the value
     foreach my $key ( @keys ) {
-        # say dumper [ @keys ], $value;
-
         if ( Scalar::Util::blessed($value) ) {
             $value = $value->$key
         }
@@ -150,12 +148,13 @@ sub _find_key {
 sub _section {
     my $input = shift;
     my $ra_context = shift;
+    my $inverse = shift;
     my @children = @_;
 
     # unless this is the base node use _process_sections
-    return _process_sections($input, $ra_context, @children) if scalar(@$ra_context);
+    return _process_sections($input, $ra_context, $inverse, @children) if scalar(@$ra_context);
 
-    my @elements = _process_sections($input, $ra_context, @children);
+    my @elements = _process_sections($input, $ra_context, $inverse, @children);
 
     return join '', @elements;
 }
@@ -163,16 +162,18 @@ sub _section {
 sub _process_sections {
     my $input = shift;
     my $ra_context = shift;
+    my $inverse = shift;
     my @children = @_;
 
     my $value = _find_key($input, @$ra_context);
 
+    # Process contexts that include arrays, but only if they have not
+    # already been processed
     if ( none { Scalar::Util::looks_like_number($_) } @$ra_context ) {
         my @scope = @$ra_context;
         my @rest;
         while ( @scope ) {
             my $current = shift @scope;
-            my $next = $scope[0];
 
             push @rest, $current;
             my $value = _find_key($input, @rest);
@@ -180,19 +181,26 @@ sub _process_sections {
 
             if ( ref $value eq 'ARRAY' ) {
                 if ( @scope ) {
+                    # If this is a section within a list then make a sub that
+                    # processes that section for a given index
+
                     return sub {
                         my $index = shift;
 
-                        _process_sections($input, [@rest, $index, @scope], @children)
+                        _process_sections($input, [@rest, $index, @scope], $inverse, @children)
                     };
                 }
                 else {
+                    # Otherwise this is the list itself, so process a section
+                    # for each element in the list, first expanding any child
+                    # subs for each item.
+
                     return map {
                         my $index = $_->{_idx};
 
                         my @inner = map { ref $_ eq 'CODE' ? $_->($index) : $_ } @children;
 
-                        _process_sections($input, [ @rest, $index ], @inner);
+                        _process_sections($input, [ @rest, $index ], $inverse, @inner);
                     } @$value;
                 }
 
@@ -200,7 +208,8 @@ sub _process_sections {
         }
     }
 
-    return () unless $value;
+    # say dumper [ $ra_context, !!$value, $inverse ];
+    return () unless ($value xor $inverse);
     @children = _interpolate_variables($input, $ra_context, @children);
     @children = _remove_whitespace($input, $ra_context, @children);
 
@@ -259,12 +268,13 @@ sub _parse_tree {
     my $self = shift;
     my $ra_tree = shift;
     my $context = shift // '';
+    my $inverse = shift // 0;
 
     $ra_tree = $self->_flatten_trees($ra_tree);
     $ra_tree = $self->_insert_variables($ra_tree);
     $ra_tree = $self->_parse_children($ra_tree, $context);
 
-    return "\$s->(\$c, [ $context ], " . join(', ', @$ra_tree) . ")";
+    return "\$s->(\$c, [ $context ], $inverse, " . join(', ', @$ra_tree) . ")";
 }
 
 
@@ -293,7 +303,7 @@ sub _parse_children {
         if ( ref $_ eq 'HASH' && $_->{type} eq 'context' ) {
             my $context_string = $context ? "$context, '" . $_->{value} . "'" : "'" . $_->{value} . "'";
 
-            $self->_parse_tree($_->{tree}, $context_string);
+            $self->_parse_tree($_->{tree}, $context_string, $_->{inverse});
         }
         else {
             $_;
@@ -353,7 +363,7 @@ sub _grammar {
                   | '{{{' word '}}}'                            action => do_interpolate
                   | '{{&' word '}}'                             action => do_interpolate
                   | '{{#' word '}}' mustache '{{/' word '}}'    action => do_section
-                  | '{{^' word '}}' mustache '{{/' word '}}'    action => do_section
+                  | '{{^' word '}}' mustache '{{/' word '}}'    action => do_inverse_section
 
     word ~ maybe_whitespace just_word maybe_whitespace
 
@@ -420,6 +430,15 @@ package MarpaX::Text::Caml::Actions {
         return $variable;
     }
 
+    sub do_inverse_section {
+        my (undef, undef, $context, undef, $ra_tree) = @_;
+
+        my $context = do_section(undef, undef, $context, undef, $ra_tree);
+        $context->{inverse} = 1;
+
+        return $context;
+    }
+
     sub do_section {
         my (undef, undef, $context, undef, $ra_tree) = @_;
         my ($first, @rest) = split /\./, $context;
@@ -432,6 +451,7 @@ package MarpaX::Text::Caml::Actions {
             type    => 'context',
             value   => trim($first),
             tree    => $ra_tree,
+            inverse => 0,
         };
     }
 }

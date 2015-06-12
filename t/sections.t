@@ -84,6 +84,7 @@ $output = $renderer->render('{{#list}}{{^_first}}, {{/_first}}{{.}}{{/list}}',
     {list => [1, 2, 3]});
 is $output => '1, 2, 3', 'special check {{_first}} checks for index zero';
 
+__END__
 $output = $renderer->render('{{#list}}{{.}}{{^_last}}, {{/_last}}{{/list}}',
     {list => [1, 2, 3]});
 is $output => '1, 2, 3', 'special check {{_last}} checks for last index';
