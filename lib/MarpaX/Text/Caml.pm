@@ -40,6 +40,8 @@ sub _compile {
     my $template = shift;
     my $parsed = $self->_parse($template);
 
+    # say dumper $parsed;
+
     my $code = eval $parsed // die $@;
 
     return sub {
@@ -86,9 +88,9 @@ sub _add_indexes {
             $i++;
 
             {
+                _idx    => $i,
                 _first  => $i == 0 ? 1 : 0,
                 _last   => $i == scalar(@$value) - 1 ? 1 : 0,
-                _idx    => $i,
                 _even   => $i % 2 == 0 ? 1 : 0,
                 _odd    => $i % 2 == 0 ? 0 : 1,
                 %$_,
@@ -97,67 +99,64 @@ sub _add_indexes {
     ];
 }
 
-sub _get_type {
-    my $scalar = shift;
+sub _find_key_in_parent_scope {
+    my $input = shift;
+    my @keys = @_;
+    my $last = pop @keys;
 
-    if ( Scalar::Util::blessed($scalar) ) {
-        return 'OBJECT';
-    }
-    elsif ( defined $scalar ) {
-        return ref $scalar;
-    }
-    else {
-        return 'UNDEF';
-    }
+    pop @keys; # remove the containing scope
+
+    return _find_key($input, @keys, $last);
 }
 
 sub _find_key {
     my $input = shift;
     my @keys = @_;
-    $input = clone($input);
+    my $value = clone($input);
 
     # Walk down the context to find the value
     foreach my $key ( @keys ) {
-        if ( Scalar::Util::blessed($input) ) {
-            $input = $input->$key
+        # say dumper [ @keys ], $value;
+
+        if ( Scalar::Util::blessed($value) ) {
+            $value = $value->$key
         }
-        elsif ( ref $input eq 'HASH' ) {
-            $input = $input->{$key};
+        elsif ( ref $value eq 'ARRAY' ) {
+            if ( Scalar::Util::looks_like_number($key) ) {
+                $value = $value->[$key];
+            }
+            else {
+                return _find_key_in_parent_scope($input, @keys);
+            }
         }
-        elsif ( ref $input eq 'ARRAY' ) {
-            $input = $input->[$key];
+        elsif ( ref $value eq 'HASH' ) {
+            $value = $value->{$key};
+        }
+        elsif ( scalar @keys > 1 ) {
+            return _find_key_in_parent_scope($input, @keys);
+        }
+        else {
+            return undef;
         }
     }
 
-    if ( !defined $input && scalar @keys > 1 ) {
-        my $last = pop @keys;
-        pop @keys;
-
-        return _find_key($input, @keys, $last);
+    if ( !defined $value && scalar @keys > 1 ) {
+        return _find_key_in_parent_scope($input, @keys);
     }
 
-    return $input;
+    return $value;
 }
 
 sub _section {
     my $input = shift;
     my $ra_context = shift;
-    my $value = shift // _find_key($input, @$ra_context);
     my @children = @_;
 
+    my $value = _find_key($input, @$ra_context);
     return '' unless $value;
 
     if ( ref $value eq 'ARRAY' ) {
-        return map {
-            say dumper $input, [ @$ra_context, $_->{_idx} ];
-
-            _section(
-                $input,
-                [ @$ra_context ],
-                $_,
-                @children
-            )
-        } @$value;
+        return map { _section($input, [ @$ra_context, $_->{_idx} ], @children) } @$value;
     }
 
     @children = _interpolate_variables($input, $ra_context, @children);
@@ -223,7 +222,7 @@ sub _parse_tree {
     $ra_tree = $self->_insert_variables($ra_tree);
     $ra_tree = $self->_parse_children($ra_tree, $context);
 
-    return "\$s->(\$c, [ $context ], undef, " . join(', ', @$ra_tree) . ")";
+    return "\$s->(\$c, [ $context ], " . join(', ', @$ra_tree) . ")";
 }
 
 

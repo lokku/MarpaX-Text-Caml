@@ -58,7 +58,6 @@ $output =
     {list => [{n => 1}, {n => 2}, {n => 3}]});
 is $output => '123', 'list section loops over list with scope';
 
-__END__
 $output = $renderer->render('{{#list}}{{.}}{{/list}}', {list => [1, 2, 3]});
 is $output => '123', 'list section loops over list and {{.}} gives current list item';
 
