@@ -31,7 +31,7 @@ sub new {
 sub render {
     my $self = shift;
     my $template = shift;
-    my $data = shift;
+    my $data = ref $_[0] eq 'HASH' ? $_[0] : {@_};
 
     return '' unless $template;
 
@@ -67,13 +67,12 @@ sub _path_for {
 sub render_file {
     my $self = shift;
     my $filename = shift;
-    my $data = shift;
 
     my $path = $self->_path_for($filename);
 
     my $template = read_file($path);
 
-    return $self->render($template, $data);
+    return $self->render($template, @_);
 }
 
 sub _compile {
@@ -284,6 +283,8 @@ sub _interpolate_variables {
     return map {
         if ( ref $_ eq 'HASH' && $_->{type} eq 'variable' ) {
             my $value = _find_key($input, @$ra_context, $_->{value});
+
+            $value = $value->() if ref $value eq 'CODE';
 
             $_->{escape} ? _escape($value) : $value;
         }

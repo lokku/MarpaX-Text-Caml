@@ -29,41 +29,45 @@ $output = $renderer->render(
 );
 is $output => 'text', 'sub returning "text" renders as "text"';
 
-$output = $renderer->render(
-    '{{lamda}}',
-    {   lamda => sub {'{{var}}'},
-        var   => 'text'
-    }
-);
-is $output => 'text', 'sub returning partial "{{var}}" renders as expected';
+SKIP: {
+    skip 'Compiled templates do not support dynamic methods', 4;
 
-$output = $renderer->render(
-    '{{#lamda}}Hello{{/lamda}}',
-    {   lamda => sub {'{{var}}'},
-        var   => 'text'
-    }
-);
-is $output => 'text', 'sub can be used as {{#lambda}}';
+    $output = $renderer->render(
+        '{{lamda}}',
+        {   lamda => sub {'{{var}}'},
+            var   => 'text'
+        }
+    );
+    is $output => 'text', 'sub returning partial "{{var}}" renders as expected';
 
-my $wrapped = sub {
-    my $self = shift;
-    my $text = shift;
+    $output = $renderer->render(
+        '{{#lamda}}Hello{{/lamda}}',
+        {   lamda => sub {'{{var}}'},
+            var   => 'text'
+        }
+    );
+    is $output => 'text', 'sub can be used as {{#lambda}}';
 
-    return '<b>' . $self->render($text, @_) . '</b>';
-};
+    my $wrapped = sub {
+        my $self = shift;
+        my $text = shift;
 
-$output = $renderer->render(<<'EOF', {name => 'Willy', wrapped => $wrapped});
-{{#wrapped}}
-{{name}} is awesome.
-{{/wrapped}}
-EOF
-is $output => "<b>Willy is awesome.</b>", 'sub takes renderer as first parameter and template text as second parameter';
+        return '<b>' . $self->render($text, @_) . '</b>';
+    };
 
-$output = $renderer->render(<<'EOF', {wrapper => sub {$_[1] =~ s/r/z/; $_[1]}, list => [qw/foo bar/]});
-{{#list}}
-  {{#wrapper}}
-    {{.}}
-  {{/wrapper}}
-{{/list}}
-EOF
-like $output => qr/foo\s+baz/, 'sub can manipulate the template text directly';
+    $output = $renderer->render(<<'    EOF', {name => 'Willy', wrapped => $wrapped});
+    {{#wrapped}}
+    {{name}} is awesome.
+    {{/wrapped}}
+    EOF
+    is $output => "<b>Willy is awesome.</b>", 'sub takes renderer as first parameter and template text as second parameter';
+
+    $output = $renderer->render(<<'    EOF', {wrapper => sub {$_[1] =~ s/r/z/; $_[1]}, list => [qw/foo bar/]});
+    {{#list}}
+      {{#wrapper}}
+        {{.}}
+      {{/wrapper}}
+    {{/list}}
+    EOF
+    like $output => qr/foo\s+baz/, 'sub can manipulate the template text directly';
+}
