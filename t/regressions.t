@@ -1,7 +1,7 @@
 use strict;
 use warnings;
 
-use Test::More tests => 1;
+use Test::More tests => 2;
 
 use MarpaX::Text::Caml;
 
@@ -27,4 +27,11 @@ use File::Spec ();
         'Hello Alex!',
         'handle non-hashref context in render_file()'
     );
+}
+
+{
+    my $renderer = MarpaX::Text::Caml->new;
+
+    my $output = $renderer->render('a {{name}}: {', { name => 'mustache' });
+    is $output => 'a mustache: {', 'renders single curly braces';
 }

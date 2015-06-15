@@ -33,18 +33,14 @@ sub render {
     my $template = shift;
     my $data = ref $_[0] eq 'HASH' ? $_[0] : {@_};
 
-    return '' unless $template;
-
-    $template = $self->_inline_partials($template);
-
-    return $self->_compile($template)->($data);
+    return $self->compile($template)->($data);
 }
 
 sub _inline_partials {
     my $self = shift;
     my $template = shift;
 
-    foreach my $filename ( $template =~ m/{{>(.*)}}/ ) {
+    foreach my $filename ( $template =~ m/{{>(.*)}}/g ) {
         my $partial = read_file($self->_path_for(trim($filename)));
 
         $partial = $self->_inline_partials($partial);
@@ -67,12 +63,28 @@ sub _path_for {
 sub render_file {
     my $self = shift;
     my $filename = shift;
+    my $data = ref $_[0] eq 'HASH' ? $_[0] : {@_};
 
-    my $path = $self->_path_for($filename);
+    return $self->compile_file($filename)->($data);
+}
 
-    my $template = read_file($path);
+sub compile_file {
+    my $self = shift;
+    my $filename = shift;
+    my $template = read_file($self->_path_for($filename));
 
-    return $self->render($template, @_);
+    return $self->compile($template);
+}
+
+sub compile {
+    my $self = shift;
+    my $template = shift;
+
+    return sub { '' } unless $template;
+
+    $template = $self->_inline_partials($template);
+
+    return $self->_compile($template);
 }
 
 sub _compile {
@@ -281,7 +293,7 @@ sub _interpolate_variables {
     my @children = @_;
 
     return map {
-        if ( ref $_ eq 'HASH' && $_->{type} eq 'variable' ) {
+        if ( (ref $_ // '') eq 'HASH' && $_->{type} eq 'variable' ) {
             my $value = _find_key($input, @$ra_context, $_->{value});
 
             $value = $value->() if ref $value eq 'CODE';
@@ -418,8 +430,7 @@ sub _grammar {
 
     :start ::= mustache
 
-    mustache ::= string_node
-                | interpolate_node
+    mustache ::= interpolate_node | string_node
 
     interpolate_node ::= interpolate
                       | interpolate string_node
@@ -434,7 +445,7 @@ sub _grammar {
 
     word ~ maybe_whitespace just_word maybe_whitespace
 
-    just_word ~ [\w.]+
+    just_word ~ [-\w.]+
 
     maybe_whitespace ~ whitespace*
 
@@ -443,9 +454,13 @@ sub _grammar {
     string_node ::= string
                   | string interpolate_node
 
-    string ::= lstring+ action => do_string
+    string ::= lstring+
 
-    lstring ~ [^{}]+
+    lstring ::= not_brace   action => do_string
+            | '{'           action => do_string
+            | '}'           action => do_string
+
+    not_brace ~ [^{}]+
 
     :discard ~ comment
     comment ~ maybe_newline '{{!' anything '}}' maybe_newline
@@ -471,6 +486,8 @@ package MarpaX::Text::Caml::Actions {
     sub do_string {
         my (undef, @chars) = @_;
         my $string = join '', @chars;
+
+        $string =~ s/'/\\'/g;
 
         return "'$string'";
     }
