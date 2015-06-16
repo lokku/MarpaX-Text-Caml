@@ -6,8 +6,8 @@ use warnings;
 use feature 'say';
 
 require Scalar::Util;
-use Clone qw(clone);
 use List::Util qw(any none);
+use Array::Compare;
 use File::Slurp qw(read_file);
 use Text::Trim qw(trim);
 use Marpa::R2;
@@ -18,7 +18,7 @@ our $VERSION = '0.1';
 sub dumpit {
     require Data::Dumper;
 
-    say Data::Dumper::Dumper @_;
+    say Data::Dumper::Dumper \@_;
 }
 
 sub new {
@@ -48,7 +48,6 @@ sub _inline_partials {
 
         $template =~ s/{{>$filename}}/$partial/;
     };
-
 
     return $template;
 }
@@ -170,6 +169,13 @@ sub _find_key_in_parent_scope {
     my @keys = @_;
     my $last = pop @keys;
 
+    my ($value, $ra_actual_keys) = _find_key($input, @keys);
+
+    my $comp = Array::Compare->new;
+    if ( !$comp->compare(\@keys, $ra_actual_keys) ) {
+        return _find_key($input, @$ra_actual_keys, $last);
+    };
+
     pop @keys; # remove the containing scope
 
     return _find_key($input, @keys, $last);
@@ -178,7 +184,7 @@ sub _find_key_in_parent_scope {
 sub _find_key {
     my $input = shift;
     my @keys = @_;
-    my $value = clone($input);
+    my $value = $input;
 
     # Walk down the context to find the value
     foreach my $key ( @keys ) {
@@ -213,7 +219,41 @@ sub _find_key {
         return _find_key_in_parent_scope($input, @keys);
     }
 
-    return $value;
+    if ( wantarray ) {
+        return ($value, \@keys);
+    }
+    else {
+        return $value;
+    }
+}
+
+sub _resolve_context {
+    my $input = shift;
+    my $ra_left = shift;
+    my $ra_right = shift;
+
+    my @left = @$ra_left;
+    my @right = @$ra_right;
+
+    while ( @right ) {
+        my $current = shift @right;
+
+        my ($value, $ra_actual_left) = _find_key($input, @left, $current);
+
+        if ( ref $value eq 'ARRAY' ) {
+            return sub {
+                my $index = shift;
+
+                return _resolve_context($input, [ @$ra_actual_left, $index ], \@right);
+            }
+        }
+
+        push @left, $current;
+    }
+
+    my ($value, $ra_actual_left) = _find_key($input, @left);
+
+    return $ra_actual_left;
 }
 
 sub _section {
@@ -222,65 +262,45 @@ sub _section {
     my $inverse = shift;
     my @children = @_;
 
+    if ( ref $ra_context ne 'ARRAY' ) {
+        dumpit [caller], $ra_context, \@children;
+    }
+
+    my $actual_context = _resolve_context($input, [], $ra_context);
     my $value = _find_key($input, @$ra_context);
 
-    # Process contexts that include arrays, but only if they have not
-    # already been processed
-    if ( none { Scalar::Util::looks_like_number($_) } @$ra_context ) {
-        my @scope = @$ra_context;
-        my @rest;
-        while ( @scope ) {
-            my $current = shift @scope;
-
-            push @rest, $current;
-            my $value = _find_key($input, @rest);
-
-
-            if ( ref $value eq 'ARRAY' && scalar @$value > 0 ) {
-                if ( @scope ) {
-                    # If this is a section within a list then make a sub that
-                    # processes that section for a given index
-
-                    return sub {
-                        my $index = shift;
-
-                        _section($input, [@rest, $index, @scope], $inverse, @children)
-                    };
-                }
-                else {
-                    # Otherwise this is the list itself, so process a section
-                    # for each element in the list, first expanding any child
-                    # subs for each item
-
-                    return map {
-                        my $index = $_->{_idx};
-
-                        my @inner = map { ref $_ eq 'CODE' ? $_->($index) : $_ } @children;
-
-                        _section($input, [ @rest, $index ], $inverse, @inner);
-                    } @$value;
-                }
-
-            }
+    if ( ref $value eq 'ARRAY' ) {
+        if ( scalar @$value == 0 ) {
+            $value = 0;
         }
-    }
-    else {
-        # Handle arrays of arrays which use {{#.}}{{/.}}
-        if ( ref $value eq 'ARRAY' ) {
-            my $i = 0;
-
+        else {
             return map {
-                _section($input, [ @$ra_context, $i++ ], $inverse, @children)
+                my $index = $_->{_idx};
+
+                my @inner = @children;
+                while ( grep { ref $_ eq 'CODE' } @inner ) {
+                    @inner = map { ref $_ eq 'CODE' ? $_->($index) : $_ } @inner;
+                }
+
+                _section($input, $actual_context->($index), $inverse, @inner);
             } @$value;
         }
     }
 
-    $value = 0 if ref $value eq 'ARRAY' && scalar @$value == 0;
+    HEREREREREREREERER
+    if ( !defined $value && ref $actual_context eq 'CODE' ) {
+        return sub {
+            my $index = shift;
+
+            return _section($input, $actual_context->($index), $inverse, @children);
+        };
+    }
 
     # If inverted section and false => show
     # If normal section and true => show
     # Otherwise do not show
     return () unless ($value xor $inverse);
+
     @children = _interpolate_variables($input, $ra_context, @children);
     @children = grep { defined } @children;
 
@@ -293,7 +313,7 @@ sub _interpolate_variables {
     my @children = @_;
 
     return map {
-        if ( (ref $_ // '') eq 'HASH' && $_->{type} eq 'variable' ) {
+        if ( ref $_ eq 'HASH' && $_->{type} eq 'variable' ) {
             my $value = _find_key($input, @$ra_context, $_->{value});
 
             $value = $value->() if ref $value eq 'CODE';
@@ -456,11 +476,11 @@ sub _grammar {
 
     string ::= lstring+
 
-    lstring ::= not_brace   action => do_string
-            | '{'           action => do_string
-            | '}'           action => do_string
+    lstring ::= not_curly_brace     action => do_string
+            | '{'                   action => do_string
+            | '}'                   action => do_string
 
-    not_brace ~ [^{}]+
+    not_curly_brace ~ [^{}]+
 
     :discard ~ comment
     comment ~ maybe_newline '{{!' anything '}}' maybe_newline
