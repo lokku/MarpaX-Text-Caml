@@ -91,7 +91,7 @@ sub _compile {
     my $template = shift;
     my $parsed = $self->_parse($template);
 
-    # dumpit $parsed;
+    dumpit $parsed;
 
     my $code = eval $parsed // die $@;
 
@@ -256,44 +256,66 @@ sub _resolve_context {
     return $ra_actual_left;
 }
 
+sub _in_array_section {
+    my $input = shift;
+    my $actual_context = shift;
+    my $inverse = shift;
+    my @children = @_;
+
+    return sub {
+        my $index = shift;
+        my $inner_context = $actual_context->($index);
+
+        if ( ref $inner_context eq 'CODE' ) {
+            return _in_array_section($input, $inner_context, $inverse, @children);
+        }
+        else {
+            return _section($input, $inner_context, $inverse, @children);
+        }
+    };
+}
+
+sub _array_section {
+    my $value = shift;
+    my $input = shift;
+    my $ra_context = shift;
+    my $inverse = shift;
+    my @children = @_;
+
+    dumpit $value;
+
+    return map {
+        my $index = $_->{_idx};
+
+        my @inner = @children;
+        while ( grep { ref $_ eq 'CODE' } @inner ) {
+            @inner = map { ref $_ eq 'CODE' ? $_->($index) : $_ } @inner;
+        }
+
+        _section($input, $ra_context->($index), $inverse, @inner);
+    } @$value;
+}
+
 sub _section {
     my $input = shift;
     my $ra_context = shift;
     my $inverse = shift;
     my @children = @_;
 
-    if ( ref $ra_context ne 'ARRAY' ) {
-        dumpit [caller], $ra_context, \@children;
-    }
-
     my $actual_context = _resolve_context($input, [], $ra_context);
     my $value = _find_key($input, @$ra_context);
+
+    if ( !defined $value && ref $actual_context eq 'CODE' ) {
+        return _in_array_section($input, $actual_context, $inverse, @children);
+    }
 
     if ( ref $value eq 'ARRAY' ) {
         if ( scalar @$value == 0 ) {
             $value = 0;
         }
         else {
-            return map {
-                my $index = $_->{_idx};
-
-                my @inner = @children;
-                while ( grep { ref $_ eq 'CODE' } @inner ) {
-                    @inner = map { ref $_ eq 'CODE' ? $_->($index) : $_ } @inner;
-                }
-
-                _section($input, $actual_context->($index), $inverse, @inner);
-            } @$value;
+            return _array_section($value, $input, $actual_context, $inverse, @children);
         }
-    }
-
-    HEREREREREREREERER
-    if ( !defined $value && ref $actual_context eq 'CODE' ) {
-        return sub {
-            my $index = shift;
-
-            return _section($input, $actual_context->($index), $inverse, @children);
-        };
     }
 
     # If inverted section and false => show

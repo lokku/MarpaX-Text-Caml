@@ -106,4 +106,4 @@ is_deeply(
 
 $output = $renderer->render($template, $rh_data);
 $output =~ s/\s+/ /g;
-is $output => ' POA A House in London $295,000 A Flat in New York ', 'array inside negative section';
+is $output => ' POA Pizza oven Tandoor A House in London $295,000 A Flat in New York ', 'array inside negative section';
