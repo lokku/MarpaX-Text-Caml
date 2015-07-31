@@ -227,108 +227,6 @@ sub _find_key {
     }
 }
 
-sub _resolve_context {
-    my $input = shift;
-    my $ra_left = shift;
-    my $ra_right = shift;
-
-    my @left = @$ra_left;
-    my @right = @$ra_right;
-
-    while ( @right ) {
-        my $current = shift @right;
-
-        my ($value, $ra_actual_left) = _find_key($input, @left, $current);
-
-        if ( ref $value eq 'ARRAY' ) {
-            return sub {
-                my $index = shift;
-
-                return _resolve_context($input, [ @$ra_actual_left, $index ], \@right);
-            }
-        }
-
-        push @left, $current;
-    }
-
-    my ($value, $ra_actual_left) = _find_key($input, @left);
-
-    return $ra_actual_left;
-}
-
-sub _in_array_section {
-    my $input = shift;
-    my $actual_context = shift;
-    my $inverse = shift;
-    my @children = @_;
-
-    return sub {
-        my $index = shift;
-        my $inner_context = $actual_context->($index);
-
-        if ( ref $inner_context eq 'CODE' ) {
-            return _in_array_section($input, $inner_context, $inverse, @children);
-        }
-        else {
-            return _section($input, $inner_context, $inverse, @children);
-        }
-    };
-}
-
-sub _array_section {
-    my $value = shift;
-    my $input = shift;
-    my $ra_context = shift;
-    my $inverse = shift;
-    my @children = @_;
-
-    dumpit $value;
-
-    return map {
-        my $index = $_->{_idx};
-
-        my @inner = @children;
-        while ( grep { ref $_ eq 'CODE' } @inner ) {
-            @inner = map { ref $_ eq 'CODE' ? $_->($index) : $_ } @inner;
-        }
-
-        _section($input, $ra_context->($index), $inverse, @inner);
-    } @$value;
-}
-
-sub _section {
-    my $input = shift;
-    my $ra_context = shift;
-    my $inverse = shift;
-    my @children = @_;
-
-    my $actual_context = _resolve_context($input, [], $ra_context);
-    my $value = _find_key($input, @$ra_context);
-
-    if ( !defined $value && ref $actual_context eq 'CODE' ) {
-        return _in_array_section($input, $actual_context, $inverse, @children);
-    }
-
-    if ( ref $value eq 'ARRAY' ) {
-        if ( scalar @$value == 0 ) {
-            $value = 0;
-        }
-        else {
-            return _array_section($value, $input, $actual_context, $inverse, @children);
-        }
-    }
-
-    # If inverted section and false => show
-    # If normal section and true => show
-    # Otherwise do not show
-    return () unless ($value xor $inverse);
-
-    @children = _interpolate_variables($input, $ra_context, @children);
-    @children = grep { defined } @children;
-
-    return @children;
-};
-
 sub _interpolate_variables {
     my $input = shift;
     my $ra_context = shift;
@@ -371,7 +269,7 @@ sub _parse {
     return "sub {
         my (\$c, \$s) = \@_;
 
-        my \@elements = $output;
+        my \@elements = ($output);
 
         \@elements = map {
             s/^\\n//;
@@ -394,7 +292,7 @@ sub _parse_tree {
     $ra_tree = $self->_insert_variables($ra_tree);
     $ra_tree = $self->_parse_children($ra_tree, $context);
 
-    return "\$s->(\$c, [ $context ], $inverse, " . join(', ', @$ra_tree) . ")";
+    return "sub { \$s->(\$c, [ ], [ $context ], $inverse, " . join(', ', @$ra_tree) . ") }";
 }
 
 
@@ -405,7 +303,7 @@ sub _insert_variables {
     return [
         map {
             if ( ref $_ eq 'HASH' && $_->{type} eq 'variable' ) {
-                Dumper($_);
+                Dumper($_); # oneline
             }
             else {
                 $_

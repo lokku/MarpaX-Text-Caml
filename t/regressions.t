@@ -92,18 +92,6 @@ my $rh_data = {
     },
 };
 
-is_deeply(
-    MarpaX::Text::Caml::_resolve_context($rh_data, [], [qw(results has_error listings has_price price visible)])->(0),
-    [qw(results listings 0 price visible)],
-    'finds the correct context in nasty nested stuff'
-);
-
-is_deeply(
-    MarpaX::Text::Caml::_resolve_context($rh_data, [], [qw(results has_error listings has_keywords keywords)])->(0)->(1),
-    [qw(results listings 0 keywords 1)],
-    'finds the correct context in nasty nested stuff'
-);
-
 $output = $renderer->render($template, $rh_data);
 $output =~ s/\s+/ /g;
 is $output => ' POA Pizza oven Tandoor A House in London $295,000 A Flat in New York ', 'array inside negative section';

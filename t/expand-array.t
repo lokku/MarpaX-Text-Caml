@@ -29,6 +29,10 @@ my $input = {
                         name        => 'bathroom',
                         nicename    => 'Bathroom',
                     },
+                    {
+                        name        => 'pizza_oven',
+                        nicename    => 'Pizza oven',
+                    },
                 ],
             },
         ],
@@ -57,6 +61,18 @@ is_deeply(
     MarpaX::Text::Caml::_resolve_context($input, [], [qw(results listings has_keywords keywords)])->(1)->(0),
     [qw(results listings 1 keywords 0)],
     'array within array resolves to nested subs that return the context for the indices'
+);
+
+is_deeply(
+    MarpaX::Text::Caml::_resolve_context($input, [], [qw(results listings 1 keywords 0)]),
+    [qw(results listings 1 keywords 0)],
+    'does not wrap already expanded context'
+);
+
+is_deeply(
+    MarpaX::Text::Caml::_resolve_context($input, [], [qw(results listings 1 keywords)])->(1),
+    [qw(results listings 1 keywords 1)],
+    'does not wrap already expanded context'
 );
 
 done_testing;

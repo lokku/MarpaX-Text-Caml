@@ -88,9 +88,9 @@ $output = $renderer->render('{{#list}}{{.}}{{^_last}}, {{/_last}}{{/list}}',
     {list => [1, 2, 3]});
 is $output => '1, 2, 3', 'special check {{_last}} checks for last index';
 
-# $output = $renderer->render('{{#list}}<ul>{{#.}}<li>{{.}}</li>{{/.}}</ul>{{/list}}',
-#     {list => [[1], [2, 3], [4]]});
-# is $output => '<ul><li>1</li></ul><ul><li>2</li><li>3</li></ul><ul><li>4</li></ul>', 'loop over lists of lists with {{#.}}';
+$output = $renderer->render('{{#list}}<ul>{{#.}}<li>{{.}}</li>{{/.}}</ul>{{/list}}',
+    {list => [[1], [2, 3], [4]]});
+is $output => '<ul><li>1</li></ul><ul><li>2</li><li>3</li></ul><ul><li>4</li></ul>', 'loop over lists of lists with {{#.}}';
 
 $output = $renderer->render('{{#list}}{{method}}{{/list}}',
     {list => [Foo->new(values => 1), Foo->new(values => 2)]});
